@@ -16,9 +16,9 @@ TM1637Display display(CLK, DIO);
 CRGB leds[NUM_LEDS];
 Adafruit_VCNL4040 vcnl;
 
-// ================== VCNL4040 ==================
-#define GLAS_AN   100   // Threshold: glass detected
-#define GLAS_AUS  5     // Threshold: glass removed
+// ================== GLASS ==================
+#define GLASS_ON_THRESHOLD   18
+#define GLASS_OFF_THRESHOLD  10
 
 bool glassPresent = false;
 
@@ -89,7 +89,7 @@ void setup() {
   FastLED.show();
 
   Wire.begin();
-  vcnl.begin();   // no blocking while-loop, system stays responsive
+  vcnl.begin();
 }
 
 // ================= LOOP =================
@@ -104,31 +104,19 @@ void loop() {
 
   switch (state) {
 
-    // -------- IDLE --------
     case IDLE:
       display.setSegments(currentMode == H1 ? SEG_H1 : SEG_H2);
       setAll(currentMode == H1 ? CRGB::Blue : CRGB::Purple);
       break;
 
-    // -------- COUNTDOWN --------
     case COUNTDOWN:
-      // small delay to allow sensor settling
       if (millis() - countdownStartTime < 150) break;
-
-      if (!glassPresent) { 
-        state = LOSE; 
-        break; 
-      }
+      if (!glassPresent) { state = LOSE; break; }
 
       if (millis() - lastCountdownTick >= 1000) {
         lastCountdownTick = millis();
-
         if (countdownValue > 0) {
           display.showNumberDec(countdownValue);
-          setAll(countdownValue == 3 ? CRGB::Red :
-                 countdownValue == 2 ? CRGB::Orange :
-                 CRGB::Black);
-
           if (soundEnabled) tone(BUZZER_PIN, 600, 120);
           countdownValue--;
         } else {
@@ -143,18 +131,15 @@ void loop() {
       }
       break;
 
-    // -------- RANDOM WAIT --------
     case RANDOM_WAIT:
       if (!glassPresent) { state = LOSE; break; }
       if (millis() - randomStart >= randomDelay) state = GO;
       break;
 
-    // -------- GO --------
     case GO:
       display.setSegments(SEG_GO);
       setAll(CRGB::Green);
       if (soundEnabled) tone(BUZZER_PIN, 1200, 200);
-
       delay(300);
 
       startTime = millis();
@@ -162,39 +147,32 @@ void loop() {
       glassWasLifted = false;
       winMelodyPlayed = false;
       loseMelodyPlayed = false;
-
       state = RUNNING;
       break;
 
-    // -------- RUNNING --------
     case RUNNING:
       runHeartbeat();
       showTimeHundredths(millis() - startTime);
 
       if (!glassPresent) glassWasLifted = true;
-
       if (glassPresent && glassWasLifted) {
         elapsedTime = millis() - startTime;
         state = FINISHED;
       }
       break;
 
-    // -------- FINISHED --------
     case FINISHED:
       showTimeHundredths(elapsedTime);
       pulseWhite();
-
       if (!winMelodyPlayed && soundEnabled) {
         playWinMelody();
         winMelodyPlayed = true;
       }
       break;
 
-    // -------- LOSE --------
     case LOSE:
       display.setSegments(SEG_LOSE);
       blinkRed();
-
       if (!loseMelodyPlayed && soundEnabled) {
         playLoseMelody();
         loseMelodyPlayed = true;
@@ -203,22 +181,16 @@ void loop() {
   }
 }
 
-// ================= VCNL =================
+// ================= GLASS =================
 void updateGlassState() {
   uint16_t prox = vcnl.getProximity();
 
-  if (!glassPresent && prox > GLAS_AN) {
+  if (!glassPresent && prox >= GLASS_ON_THRESHOLD) {
     glassPresent = true;
   }
-  else if (glassPresent && prox < GLAS_AUS) {
+  else if (glassPresent && prox <= GLASS_OFF_THRESHOLD) {
     glassPresent = false;
   }
-}
-
-// Synchronize glass state when starting a new round
-void syncGlassState() {
-  uint16_t prox = vcnl.getProximity();
-  glassPresent = prox > GLAS_AN;
 }
 
 // ================= BUTTON =================
@@ -234,13 +206,11 @@ void handleButton() {
     unsigned long duration = millis() - buttonPressTime;
     buttonPressed = false;
 
-    // ---- SHORT PRESS ----
     if (duration < 1000) {
       if (state == IDLE) {
         currentMode = (currentMode == H1) ? H2 : H1;
       }
       else if (state == FINISHED || state == LOSE) {
-        syncGlassState();
         countdownValue = 3;
         lastCountdownTick = millis();
         countdownStartTime = millis();
@@ -249,15 +219,14 @@ void handleButton() {
         state = COUNTDOWN;
       }
     }
-    // ---- LONG PRESS ----
     else {
       if (state == IDLE) {
-        syncGlassState();
         countdownValue = 3;
         lastCountdownTick = millis();
         countdownStartTime = millis();
         state = COUNTDOWN;
-      } else {
+      }
+      else if (state == FINISHED || state == LOSE) {
         soundEnabled = !soundEnabled;
         display.setSegments(soundEnabled ? SEG_ON : SEG_OFF);
         showSoundStatus = true;
