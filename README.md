@@ -1,3 +1,6 @@
+Watch a Video instead?
+->https://youtu.be/FP-fnMSCye8
+
 ## How to Play 🎮🍺
 
 ### Power On
